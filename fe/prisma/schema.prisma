@@ -1,0 +1,292 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  TRAINER
+  CLIENT
+}
+
+enum Goal {
+  FAT_LOSS
+  MUSCLE_GAIN
+  STRENGTH
+  MAINTENANCE
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String?        @unique                  // Nullable to support phone-only onboarding
+  name          String
+  phone         String         @unique                  // Primary messaging & login identifier
+  role          Role           @default(CLIENT)
+  passwordHash  String?        @map("password_hash")
+  inviteToken   String?        @unique @map("invite_token")
+  inviteExpires DateTime?      @map("invite_expires")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  trainerProfile  TrainerProfile?
+  clientProfile   ClientProfile?
+  sessions        Session[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model TrainerProfile {
+  id              String         @id @default(uuid())
+  userId          String         @unique @map("user_id")
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName    String?        @map("business_name")
+  instagramHandle String?        @map("instagram_handle")
+  coachingType    String?        @map("coaching_type")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  clients         ClientProfile[]
+  plans           Plan[]
+  exercises       Exercise[]
+}
+
+model ClientProfile {
+  id              String        @id @default(uuid())
+  userId          String        @unique @map("user_id")
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trainerId       String        @map("trainer_id")
+  trainer         TrainerProfile @relation(fields: [trainerId], references: [id])
+  
+  goal            Goal
+  weightTarget    Float?
+  height          Float?
+  experienceLevel String?       @map("experience_level")
+  age             Int?
+  injuries        String?
+  gymAccess       String?       @map("gym_access")
+  
+  // Prefilled Trainer Targets (Editable by trainer, synced to Client Today Tab)
+  calorieTarget   Int           @default(2000) @map("calorie_target")
+  proteinTarget   Int           @default(150)  @map("protein_target")
+  carbsTarget     Int           @default(200)  @map("carbs_target")
+  fatsTarget      Int           @default(65)   @map("fats_target")
+  stepTarget      Int           @default(10000) @map("step_target")
+  cardioTargetMins Int          @default(30)   @map("cardio_target_mins")
+  cardioTargetDesc String?      @map("cardio_target_desc") // e.g. "Steady Walking"
+  mealPlanJson    Json?         @map("meal_plan_json")     // Prefilled meal checklists items
+  
+  currentPlanId   String?       @map("current_plan_id")
+  currentPlan     Plan?         @relation("ActivePlan", fields: [currentPlanId], references: [id], onDelete: SetNull)
+  alertDismissedKey String?     @map("alert_dismissed_key")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  checkIns        DailyCheckIn[]
+  workoutLogs     WorkoutLog[]
+  progressPhotoSets ProgressPhotoSet[]
+  healthScores    AIHealthScore[]
+  mealLogs        MealLog[]
+}
+
+model Exercise {
+  id             String         @id @default(uuid())
+  trainerId      String         @map("trainer_id")
+  trainer        TrainerProfile @relation(fields: [trainerId], references: [id])
+  catalogId      String?        @map("catalog_id")
+  name           String
+  videoMain      String?        @map("video_main")
+  videoSide      String?        @map("video_side")
+  videoMistakes  String?        @map("video_mistakes")
+  gifUrl         String?        @map("gif_url")
+  thumbnailUrl   String?        @map("thumbnail_url")
+  instructions   String
+  coachingNotes  String?        @map("coaching_notes")
+  muscleGroup    String         @map("muscle_group")
+  equipmentType  String         @map("equipment_type")
+  difficulty     String
+  tags           String?
+  archived       Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  
+  planExercises  PlanExercise[]
+
+  @@unique([trainerId, catalogId])
+}
+
+model Plan {
+  id          String         @id @default(uuid())
+  trainerId   String         @map("trainer_id")
+  trainer     TrainerProfile @relation(fields: [trainerId], references: [id])
+  name        String
+  description String?
+  
+  workoutDays PlanWorkoutDay[]
+  assignedTo  ClientProfile[]  @relation("ActivePlan")
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model PlanWorkoutDay {
+  id            String         @id @default(uuid())
+  planId        String         @map("plan_id")
+  plan          Plan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+  dayNumber     Int            @map("day_number") // e.g. 1 for Mon, 2 for Tue, etc.
+  name          String         // e.g. "Leg Day A"
+  scheduledDate DateTime?      @map("scheduled_date")
+  
+  exercises PlanExercise[]
+  logs      WorkoutLog[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+}
+
+model PlanExercise {
+  id                String         @id @default(uuid())
+  planWorkoutDayId  String         @map("plan_workout_day_id")
+  planWorkoutDay    PlanWorkoutDay @relation(fields: [planWorkoutDayId], references: [id], onDelete: Cascade)
+  exerciseId        String         @map("exercise_id")
+  exercise          Exercise       @relation(fields: [exerciseId], references: [id])
+  
+  sets              Int
+  repsRange         String         @map("reps_range") // e.g. "8-10"
+  targetWeight      Float          @default(60.0) @map("target_weight")
+  rpeTarget         Int?           @map("rpe_target")  
+  restSeconds       Int            @map("rest_seconds")
+  
+  setsJson          Json?          @map("sets_json") // Detailed per-set target weight and reps
+  supersetLabel     String?        @map("superset_label") // e.g., "A1", "A2", "B1"
+  coachingNote      String?        @map("coaching_note") // Custom coaching note from trainer
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@index([planWorkoutDayId])
+}
+
+model DailyCheckIn {
+  id             String        @id @default(uuid())
+  clientProfileId String       @map("client_profile_id")
+  client         ClientProfile @relation(fields: [clientProfileId], references: [id], onDelete: Cascade)
+  date           DateTime      @default(now())
+  
+  weight         Float?
+  sleepHours     Float?        @map("sleep_hours")
+  energyScore    Int?          @map("energy_score")
+  
+  // Daily Nutrition & Calorie Logs
+  caloriesLogged Int?          @map("calories_logged")
+  proteinLogged  Int?          @map("protein_logged")
+  carbsLogged    Int?          @map("carbs_logged")
+  fatsLogged     Int?          @map("fats_logged")
+  mealsLoggedJson Json?        @map("meals_logged_json") // Checked status of food items
+  
+  // Walking & Steps/Cardio Logs
+  stepsLogged    Int?          @map("steps_logged")
+  cardioMinsLogged Int?        @map("cardio_mins_logged")
+  cardioDescLogged String?     @map("cardio_desc_logged")
+  
+  // Target Snapping (Preserves historical macro/calorie targets at execution date)
+  targetCaloriesSnapped   Int? @map("target_calories_snapped")
+  targetProteinSnapped    Int? @map("target_protein_snapped")
+  targetCarbsSnapped      Int? @map("target_carbs_snapped")
+  targetFatsSnapped       Int? @map("target_fats_snapped")
+  targetStepsSnapped      Int? @map("target_steps_snapped")
+  targetCardioMinsSnapped Int? @map("target_cardio_mins_snapped")
+  
+  dietAdherence  Boolean       @default(false) @map("diet_adherence")
+  notes          String?
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([clientProfileId, date])
+  @@index([clientProfileId, date])
+}
+
+model WorkoutLog {
+  id               String         @id @default(uuid())
+  clientProfileId  String         @map("client_profile_id")
+  client           ClientProfile  @relation(fields: [clientProfileId], references: [id], onDelete: Cascade)
+  planWorkoutDayId String         @map("plan_workout_day_id")
+  workoutDay       PlanWorkoutDay @relation(fields: [planWorkoutDayId], references: [id], onDelete: Cascade)
+  date             DateTime       @default(now())
+  notes            String?
+  updatedAt        DateTime       @updatedAt
+  
+  setLogs          SetLog[]
+
+  @@index([clientProfileId])
+  @@index([clientProfileId, date])
+}
+
+model SetLog {
+  id           String     @id @default(uuid())
+  workoutLogId String     @map("workout_log_id")
+  workoutLog   WorkoutLog @relation(fields: [workoutLogId], references: [id], onDelete: Cascade)
+  setNumber    Int        @map("set_number")
+  weight       Float      // actual weight logged
+  reps         Int        // actual reps logged
+  
+  // Target Snapping (Preserves progressive overload weight/reps targets at execution date)
+  targetWeight Float      @map("target_weight")
+  targetReps   Int        @map("target_reps")
+  
+  exerciseName String     @default("Exercise") @map("exercise_name")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model ProgressPhotoSet {
+  id             String        @id @default(uuid())
+  clientProfileId String       @map("client_profile_id")
+  client         ClientProfile @relation(fields: [clientProfileId], references: [id], onDelete: Cascade)
+  date           DateTime      @default(now())
+  
+  photoFrontUrl  String?       @map("photo_front_url")
+  photoSideUrl   String?       @map("photo_side_url")
+  photoBackUrl   String?       @map("photo_back_url")
+  updatedAt      DateTime      @updatedAt
+}
+
+model AIHealthScore {
+  id              String        @id @default(uuid())
+  clientProfileId String        @map("client_profile_id")
+  client          ClientProfile @relation(fields: [clientProfileId], references: [id], onDelete: Cascade)
+  date            DateTime      @default(now())
+  
+  healthScore     Int           @map("health_score") // 0-100
+  riskScore       Int           @map("risk_score")   // 0-100
+  recommendation  String        @map("recommendation")
+  updatedAt       DateTime      @updatedAt
+}
+
+model MealLog {
+  id              String        @id @default(uuid())
+  clientProfileId String        @map("client_profile_id")
+  client          ClientProfile @relation(fields: [clientProfileId], references: [id], onDelete: Cascade)
+  
+  name            String        // e.g. "Breakfast" or "Chicken Salad"
+  imageUrl        String?       @map("image_url") // Compressed Base64 data or URL
+  calories        Int           @default(0)
+  protein         Int           @default(0)
+  carbs           Int           @default(0)
+  fats            Int           @default(0)
+  loggedAt        DateTime      @default(now()) @map("logged_at")
+  
+  trainerFeedback String?       @map("trainer_feedback")
+  feedbackAt      DateTime?     @map("feedback_at")
+  updatedAt       DateTime      @updatedAt
+
+  @@index([clientProfileId, loggedAt])
+}
